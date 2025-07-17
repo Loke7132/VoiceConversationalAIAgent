@@ -15,9 +15,19 @@ class Settings(BaseSettings):
     # Google Cloud Configuration
     google_cloud_project_id: str
     google_cloud_service_account_path: str
+    # Shared Google Calendar ID (e.g. "company.com_abcdefghijklmnop@group.calendar.google.com")
+    google_calendar_id: str = "primary"
     google_cloud_default_voice: str = "en-US-Standard-A"
     google_cloud_language_code: str = "en-US"
-    
+
+    # Default local timezone for interpreting user date/times and building calendar events
+    local_timezone: str = "America/New_York"
+ 
+    # Google OAuth client (installed app) for Calendar invites
+    google_oauth_client_id: str | None = None
+    google_oauth_client_secret: str | None = None
+    token_json_path: str = "token.json"
+
     # Embedding Model Configuration
     embedding_model: str = "all-MiniLM-L6-v2"
     

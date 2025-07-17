@@ -4,10 +4,15 @@ class VoiceConversationalAI {
     constructor() {
         this.apiBaseUrl = 'http://localhost:8000';
         this.sessionId = this.generateSessionId();
+        this.mapboxToken = 'pk.eyJ1Ijoic2FuamF5MDciLCJhIjoiY203M3M3ZHE3MDJ1cDJrcHh1aTZrd292NSJ9.J_dk3BJuJAW-wxqonaL8Xg'; // <-- Replace with real token
+        this.map = null;
+        this.propertyMarkers = {}; // stores markers by unique_id for quick access
+        this.propertiesLoaded = false;
         this.isRecording = false;
         this.mediaRecorder = null;
         this.audioChunks = [];
         this.uploadedDocuments = 0;
+        this.propertyList = [];
         
         this.init();
     }
@@ -22,6 +27,23 @@ class VoiceConversationalAI {
         this.checkApiStatus();
         this.setupAudioRecording();
         this.loadAvailableVoices();
+        this.setupAppointmentScheduling();
+        // Preload property list for linkification
+        this.preloadProperties();
+        // Delegated click inside chat messages for "View Live Map" links
+        const chatMsgContainer = document.getElementById('chatMessages');
+        if (chatMsgContainer) {
+            chatMsgContainer.addEventListener('click', (e) => {
+                const link = e.target.closest('.view-property-link');
+                if (link) {
+                    e.preventDefault();
+                    const propId = link.dataset.propId;
+                    if (propId) {
+                        this.showPropertyOnMap(propId);
+                    }
+                }
+            });
+        }
     }
 
     setupEventListeners() {
@@ -69,6 +91,12 @@ class VoiceConversationalAI {
             messageInput.style.height = 'auto';
             messageInput.style.height = Math.min(messageInput.scrollHeight, 100) + 'px';
         });
+
+        // Floating Properties widget
+        const propWidget = document.getElementById('propertiesWidget');
+        if (propWidget) {
+            propWidget.addEventListener('click', () => this.togglePropertiesMap());
+        }
     }
 
     updateSessionDisplay() {
@@ -341,6 +369,11 @@ class VoiceConversationalAI {
             
             // Add AI response
             this.addMessage(data.llm_response, 'assistant');
+            
+            // If the assistant indicates an appointment was scheduled, refresh the list
+            if (/scheduled your appointment/i.test(data.llm_response)) {
+                this.loadSessionAppointments();
+            }
             
             // Play audio response
             if (data.audio_response) {
@@ -645,7 +678,10 @@ class VoiceConversationalAI {
             result.push(this.formatList(listItems, listType));
         }
         
-        return result.join('');
+        // After building the formatted content, linkify property addresses
+        const htmlOutput = result.join('');
+        return this.linkifyProperties(htmlOutput);
+        
     }
     
     formatList(items, type) {
@@ -762,6 +798,464 @@ class VoiceConversationalAI {
         } catch (error) {
             console.error('Error loading available voices:', error);
             // Keep default voice if loading fails
+        }
+    }
+
+    // Appointment Scheduling Methods
+    setupAppointmentScheduling() {
+        // View Associates button
+        document.getElementById('viewAssociatesBtn').addEventListener('click', () => this.viewAssociates());
+        
+        // Schedule Appointment button
+        document.getElementById('scheduleAppointmentBtn').addEventListener('click', () => this.showAppointmentForm());
+        
+        // Cancel appointment form
+        document.getElementById('cancelAppointmentForm').addEventListener('click', () => this.hideAppointmentForm());
+        
+        // Appointment booking form
+        document.getElementById('appointmentBookingForm').addEventListener('submit', (e) => this.handleAppointmentBooking(e));
+        
+        // Load associates on page load
+        this.loadAssociates();
+        
+        // Load session appointments
+        this.loadSessionAppointments();
+    }
+
+    async loadAssociates() {
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/associates`);
+            
+            if (response.ok) {
+                const associates = await response.json();
+                this.populateAssociateSelect(associates);
+            } else {
+                console.error('Failed to load associates');
+            }
+        } catch (error) {
+            console.error('Error loading associates:', error);
+        }
+    }
+
+    populateAssociateSelect(associates) {
+        const associateSelect = document.getElementById('associateSelect');
+        associateSelect.innerHTML = '<option value="">Select an associate...</option>';
+        
+        associates.forEach(associate => {
+            const option = document.createElement('option');
+            option.value = associate.id;
+            option.textContent = `${associate.name} - ${associate.specialization}`;
+            associateSelect.appendChild(option);
+        });
+    }
+
+    async viewAssociates() {
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/associates`);
+            
+            if (response.ok) {
+                const associates = await response.json();
+                this.displayAssociates(associates);
+            } else {
+                console.error('Failed to load associates');
+                this.showNotification('Failed to load associates', 'error');
+            }
+        } catch (error) {
+            console.error('Error loading associates:', error);
+            this.showNotification('Error loading associates', 'error');
+        }
+    }
+
+    displayAssociates(associates) {
+        const associatesList = document.getElementById('appointmentsList');
+        associatesList.innerHTML = '';
+        
+        if (associates.length === 0) {
+            associatesList.innerHTML = '<p class="no-appointments">No associates available</p>';
+            return;
+        }
+        
+        associates.forEach(associate => {
+            const associateItem = document.createElement('div');
+            associateItem.className = 'appointment-item';
+            associateItem.innerHTML = `
+                <div class="appointment-header">
+                    <div class="appointment-title">${associate.name}</div>
+                    <div class="appointment-status scheduled">${associate.specialization}</div>
+                </div>
+                <div class="appointment-details">
+                    <div><i class="fas fa-envelope"></i> ${associate.email}</div>
+                    <div><i class="fas fa-phone"></i> ${associate.phone || 'N/A'}</div>
+                    <div><i class="fas fa-clock"></i> ${associate.availability_hours}</div>
+                </div>
+                <div class="appointment-actions">
+                    <button class="btn btn-primary" onclick="app.showAvailability('${associate.id}')">
+                        <i class="fas fa-calendar"></i> View Availability
+                    </button>
+                </div>
+            `;
+            associatesList.appendChild(associateItem);
+        });
+    }
+
+    showAppointmentForm() {
+        document.getElementById('appointmentForm').style.display = 'block';
+        document.getElementById('availabilitySlots').style.display = 'none';
+    }
+
+    hideAppointmentForm() {
+        document.getElementById('appointmentForm').style.display = 'none';
+        document.getElementById('availabilitySlots').style.display = 'none';
+    }
+
+    async showAvailability(associateId) {
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/associates/${associateId}/availability?days_ahead=7`);
+            
+            if (response.ok) {
+                const slots = await response.json();
+                this.displayAvailabilitySlots(slots, associateId);
+            } else {
+                console.error('Failed to load availability');
+                this.showNotification('Failed to load availability', 'error');
+            }
+        } catch (error) {
+            console.error('Error loading availability:', error);
+            this.showNotification('Error loading availability', 'error');
+        }
+    }
+
+    displayAvailabilitySlots(slots, associateId) {
+        const availabilityList = document.getElementById('availabilityList');
+        const availabilitySlots = document.getElementById('availabilitySlots');
+        
+        availabilityList.innerHTML = '';
+        availabilitySlots.style.display = 'block';
+        
+        if (slots.length === 0) {
+            availabilityList.innerHTML = '<p class="no-appointments">No available slots</p>';
+            return;
+        }
+        
+        slots.forEach(slot => {
+            const slotElement = document.createElement('div');
+            slotElement.className = 'availability-slot';
+            slotElement.dataset.associateId = associateId;
+            slotElement.dataset.datetime = slot.datetime;
+            
+            const slotDate = new Date(slot.datetime);
+            const formattedDate = slotDate.toLocaleDateString('en-US', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+            const formattedTime = slotDate.toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            
+            slotElement.innerHTML = `
+                <div class="availability-slot-time">${formattedDate} at ${formattedTime}</div>
+                <div class="availability-slot-associate">${slot.duration_minutes} minutes</div>
+            `;
+            
+            slotElement.addEventListener('click', () => this.selectTimeSlot(slotElement));
+            availabilityList.appendChild(slotElement);
+        });
+    }
+
+    selectTimeSlot(slotElement) {
+        // Remove previous selection
+        document.querySelectorAll('.availability-slot').forEach(slot => {
+            slot.classList.remove('selected');
+        });
+        
+        // Select new slot
+        slotElement.classList.add('selected');
+        
+        // Fill appointment form
+        const associateId = slotElement.dataset.associateId;
+        const datetime = slotElement.dataset.datetime;
+        
+        document.getElementById('associateSelect').value = associateId;
+        
+        // Format datetime for input
+        const date = new Date(datetime);
+        const formattedDateTime = date.toISOString().slice(0, 16);
+        document.getElementById('appointmentDate').value = formattedDateTime;
+        
+        // Show appointment form
+        this.showAppointmentForm();
+    }
+
+    async handleAppointmentBooking(e) {
+        e.preventDefault();
+        
+        const formData = new FormData(e.target);
+        const appointmentData = {
+            session_id: this.sessionId,
+            associate_id: document.getElementById('associateSelect').value,
+            user_name: document.getElementById('clientName').value,
+            user_email: document.getElementById('clientEmail').value,
+            user_phone: document.getElementById('clientPhone').value,
+            scheduled_time: document.getElementById('appointmentDate').value,
+            appointment_type: document.getElementById('appointmentType').value,
+            notes: document.getElementById('appointmentNotes').value
+        };
+        
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/schedule_appointment`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(appointmentData)
+            });
+            
+            const result = await response.json();
+            
+            if (response.ok && result.success) {
+                this.showNotification('Appointment scheduled successfully!', 'success');
+                this.hideAppointmentForm();
+                this.loadSessionAppointments();
+                
+                // Reset form
+                document.getElementById('appointmentBookingForm').reset();
+            } else {
+                this.showNotification(result.message || 'Failed to schedule appointment', 'error');
+            }
+        } catch (error) {
+            console.error('Error booking appointment:', error);
+            this.showNotification('Error booking appointment', 'error');
+        }
+    }
+
+    async loadSessionAppointments() {
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/appointments/session/${this.sessionId}`);
+            
+            if (response.ok) {
+                const result = await response.json();
+                this.displaySessionAppointments(result.appointments);
+            } else {
+                console.error('Failed to load session appointments');
+            }
+        } catch (error) {
+            console.error('Error loading session appointments:', error);
+        }
+    }
+
+    displaySessionAppointments(appointments) {
+        const appointmentsList = document.getElementById('appointmentsList');
+        appointmentsList.innerHTML = '';
+        
+        if (appointments.length === 0) {
+            appointmentsList.innerHTML = '<p class="no-appointments">No upcoming appointments</p>';
+            return;
+        }
+        
+        appointments.forEach(appointment => {
+            const appointmentItem = document.createElement('div');
+            appointmentItem.className = 'appointment-item';
+            
+            const appointmentDate = new Date(appointment.scheduled_time);
+            const formattedDate = appointmentDate.toLocaleDateString('en-US', {
+                weekday: 'short',
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric'
+            });
+            const formattedTime = appointmentDate.toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            
+            appointmentItem.innerHTML = `
+                <div class="appointment-header">
+                    <div class="appointment-title">${appointment.appointment_type}</div>
+                    <div class="appointment-status ${appointment.status}">${appointment.status}</div>
+                </div>
+                <div class="appointment-details">
+                    <div><i class="fas fa-user"></i> ${appointment.associate_name}</div>
+                    <div><i class="fas fa-calendar"></i> ${formattedDate} at ${formattedTime}</div>
+                    <div><i class="fas fa-envelope"></i> ${appointment.user_email}</div>
+                    ${appointment.notes ? `<div><i class="fas fa-sticky-note"></i> ${appointment.notes}</div>` : ''}
+                </div>
+                <div class="appointment-actions">
+                    <button class="btn btn-secondary" onclick="app.cancelAppointment('${appointment.id}')">
+                        <i class="fas fa-times"></i> Cancel
+                    </button>
+                </div>
+            `;
+            appointmentsList.appendChild(appointmentItem);
+        });
+    }
+
+    async cancelAppointment(appointmentId) {
+        if (!confirm('Are you sure you want to cancel this appointment?')) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`${this.apiBaseUrl}/appointments/${appointmentId}/cancel`, {
+                method: 'PUT'
+            });
+            
+            const result = await response.json();
+            
+            if (response.ok && result.success) {
+                this.showNotification('Appointment cancelled successfully', 'success');
+                this.loadSessionAppointments();
+            } else {
+                this.showNotification(result.message || 'Failed to cancel appointment', 'error');
+            }
+        } catch (error) {
+            console.error('Error cancelling appointment:', error);
+            this.showNotification('Error cancelling appointment', 'error');
+        }
+    }
+
+    showNotification(message, type = 'success') {
+        const notification = document.createElement('div');
+        notification.className = `appointment-notification ${type}`;
+        notification.textContent = message;
+        
+        document.body.appendChild(notification);
+        
+        setTimeout(() => {
+            notification.remove();
+        }, 5000);
+    }
+
+    /* ---------------- Property Map ---------------- */
+
+    async togglePropertiesMap() {
+        const overlay = document.getElementById('propertyMapOverlay');
+        const mapContainer = document.getElementById('propertiesMap');
+        const isVisible = overlay.style.display !== 'none';
+        if (isVisible) {
+            overlay.style.display = 'none';
+            return;
+        }
+
+        overlay.style.display = 'flex';
+        // No need to scroll; overlay is full screen
+
+        // Lazy-init map
+        if (!this.map) {
+            if (!this.mapboxToken || this.mapboxToken.startsWith('YOUR_')) {
+                this.showNotification('Mapbox token not configured in app.js', 'error');
+                return;
+            }
+            mapboxgl.accessToken = this.mapboxToken;
+            this.map = new mapboxgl.Map({
+                container: 'propertiesMap',
+                style: 'mapbox://styles/sanjay07/cm7apwi2u005d01p7efst9xll', // updated custom style
+                center: [-73.9851, 40.7589], // Midtown Manhattan default
+                zoom: 12
+            });
+            // Add navigation controls
+            this.map.addControl(new mapboxgl.NavigationControl());
+        }
+
+        if (!this.propertiesLoaded) {
+            await this.loadAndPlotProperties();
+            this.propertiesLoaded = true;
+        }
+    }
+
+    async loadAndPlotProperties() {
+        try {
+            const resp = await fetch(`${this.apiBaseUrl}/properties`);
+            if (!resp.ok) {
+                this.showNotification('Failed to load properties', 'error');
+                return;
+            }
+            const props = await resp.json();
+            this.propertyList = props; // store for linkification
+            for (const prop of props) {
+                await this.geocodeAndAddMarker(prop);
+            }
+        } catch (err) {
+            console.error(err);
+            this.showNotification('Error loading properties', 'error');
+        }
+    }
+
+    async geocodeAndAddMarker(prop) {
+        const query = encodeURIComponent(prop.address + ', New York, NY');
+        const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${query}.json?access_token=${this.mapboxToken}&limit=1`;
+        try {
+            const res = await fetch(url);
+            const data = await res.json();
+            if (data && data.features && data.features.length > 0) {
+                const [lng, lat] = data.features[0].center;
+                const popup = new mapboxgl.Popup({ offset: 25 }).setText(`${prop.address}\n${prop.size_sf || ''} SF`);
+                const marker = new mapboxgl.Marker()
+                    .setLngLat([lng, lat])
+                    .setPopup(popup)
+                    .addTo(this.map);
+                // Store reference for quick lookup when user clicks "View Live Map"
+                if (prop.unique_id !== undefined) {
+                    this.propertyMarkers[prop.unique_id] = { marker, coords: [lng, lat] };
+                }
+            }
+        } catch (err) {
+            console.error('Geocode error', err);
+        }
+    }
+
+    /* Focus a particular property on the map given its unique_id */
+    async showPropertyOnMap(propId) {
+        // Ensure the map overlay is visible and markers are loaded
+        await this.togglePropertiesMap();
+        const entry = this.propertyMarkers[propId];
+        if (!entry) {
+            this.showNotification('Property not found on map', 'error');
+            return;
+        }
+        const { coords, marker } = entry;
+        // Smoothly move the map to the property location
+        this.map.flyTo({ center: coords, zoom: 15, essential: true });
+        if (marker && marker.togglePopup) {
+            marker.togglePopup();
+        }
+    }
+
+    /* Replace property addresses in assistant messages with live map links */
+    linkifyProperties(htmlString) {
+        if (!this.propertyList || this.propertyList.length === 0) return htmlString;
+        let result = htmlString;
+        const seen = new Set();
+        // Sort longer addresses first to prevent partial replacements
+        const sortedProps = [...this.propertyList].sort((a, b) => (b.address.length - a.address.length));
+        for (const prop of sortedProps) {
+            if (!prop.address) continue;
+            const addrKey = prop.address.toLowerCase();
+            if (seen.has(addrKey)) continue; // already added link for this address
+            // Escape address for use in regex
+            const escaped = prop.address.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(escaped, 'gi');
+            if (regex.test(result)) {
+                result = result.replace(regex, (match) => {
+                    return `${match} <a href="#" class="view-property-link" data-prop-id="${prop.unique_id}">[View Map]</a>`;
+                });
+                seen.add(addrKey);
+            }
+        }
+        return result;
+    }
+
+    /* Preload list of properties so we can linkify addresses even before map opens */
+    async preloadProperties() {
+        try {
+            const resp = await fetch(`${this.apiBaseUrl}/properties`);
+            if (resp.ok) {
+                this.propertyList = await resp.json();
+            }
+        } catch (err) {
+            console.warn('Could not preload properties:', err);
         }
     }
 }

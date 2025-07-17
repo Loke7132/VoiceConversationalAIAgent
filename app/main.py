@@ -10,6 +10,8 @@ import asyncio
 import io
 import base64
 import re
+import csv
+from pathlib import Path
 
 from .config import settings
 from .models import (
@@ -24,7 +26,19 @@ from .models import (
     ReactResponse,
     ResetResponse,
     UploadResponse,
-    ConversationMessage
+    ConversationMessage,
+    # Appointment models
+    AppointmentRequest,
+    AppointmentResponse,
+    SchedulingOfferRequest,
+    SchedulingOfferResponse,
+    FollowUpRequest,
+    FollowUpResponse,
+    AssociateInfo,
+    AvailabilitySlot,
+    AppointmentDetails,
+    AppointmentListRequest,
+    AppointmentListResponse
 )
 from .services.supabase_service import SupabaseService
 from .services.gemini_service import GeminiService
@@ -33,6 +47,7 @@ from .services.rag_service import RAGService
 from .services.translation_service import TranslationService
 from .utils.performance import PerformanceTracker
 from .services.react_service import ReActService
+from .services.appointment_service import AppointmentService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -82,6 +97,58 @@ speech_service = GoogleCloudService()
 translation_service = TranslationService()
 rag_service = RAGService(supabase_service)
 react_service = ReActService(rag_service, supabase_service, gemini_service)
+appointment_service = AppointmentService(supabase_service)
+
+# ---------------- Property Data -----------------
+
+class PropertyRecord(BaseModel):
+    unique_id: int
+    address: str
+    floor: str | None = None
+    suite: str | None = None
+    size_sf: int | None = None
+    rent_per_sf_year: str | None = None
+
+
+_PROPERTIES_CACHE: List[PropertyRecord] | None = None
+
+
+def _load_properties() -> List[PropertyRecord]:
+    global _PROPERTIES_CACHE
+    if _PROPERTIES_CACHE is not None:
+        return _PROPERTIES_CACHE
+
+    csv_path = Path(__file__).parent.parent / "HackathonInternalKnowledgeBase.csv"
+    if not csv_path.exists():
+        logger.warning("Property CSV not found: %s", csv_path)
+        _PROPERTIES_CACHE = []
+        return _PROPERTIES_CACHE
+
+    props: List[PropertyRecord] = []
+    with csv_path.open(newline='', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                props.append(
+                    PropertyRecord(
+                        unique_id=int(row.get("unique_id", len(props)+1)),
+                        address=row.get("Property Address") or "",
+                        floor=row.get("Floor"),
+                        suite=row.get("Suite"),
+                        size_sf=int(str(row.get("Size (SF)", "0")).replace(",", "")) if row.get("Size (SF)") else None,
+                        rent_per_sf_year=row.get("Rent/SF/Year")
+                    )
+                )
+            except Exception as e:
+                logger.warning("Failed parsing property row: %s", e)
+    _PROPERTIES_CACHE = props
+    return props
+
+
+@app.get("/properties", response_model=List[PropertyRecord])
+async def get_properties():
+    """Return list of properties from the knowledge base."""
+    return _load_properties()
 
 @app.on_event("startup")
 async def startup_event():
@@ -111,7 +178,17 @@ async def root():
             "converse_react_voice": "/converse_react_voice",
             "supported_languages": "/supported_languages",
             "reset": "/reset",
-            "upload_rag_docs": "/upload_rag_docs"
+            "upload_rag_docs": "/upload_rag_docs",
+            # Appointment scheduling endpoints
+            "schedule_appointment": "/schedule_appointment",
+            "associates": "/associates",
+            "associate_availability": "/associates/{associate_id}/availability",
+            "scheduling_offer": "/scheduling_offer",
+            "follow_up": "/follow_up",
+            "appointment_details": "/appointments/{appointment_id}",
+            "cancel_appointment": "/appointments/{appointment_id}/cancel",
+            "reschedule_appointment": "/appointments/{appointment_id}/reschedule",
+            "session_appointments": "/appointments/session/{session_id}"
         }
     }
 
@@ -333,6 +410,14 @@ RULES:
 - When multiple properties meet criteria, list them in order (highest to lowest, etc.)
 - Work with the data provided above to find the best answers
 
+APPOINTMENT BOOKING INSTRUCTIONS:
+When users ask to book or schedule appointments:
+- DO NOT say you cannot book appointments directly
+- DO NOT provide broker contact information for booking
+- Instead, provide property information and let the system handle the booking flow
+- If users ask about booking, focus on providing property details first
+- The system will automatically detect booking requests and offer scheduling
+
 Always provide helpful, structured responses using the property data above with accurate numerical analysis."""
             messages.append({"role": "system", "content": system_prompt})
         
@@ -343,12 +428,63 @@ Always provide helpful, structured responses using the property data above with 
         # Add current user message
         messages.append({"role": "user", "content": request.message})
         
-        # Get LLM response
-        tracker.start("llm_processing")
-        llm_response = await gemini_service.generate_response(messages)
-        # Clean the response to remove formatting markers
-        llm_response = clean_llm_response(llm_response)
-        tracker.end("llm_processing")
+        # Handle appointment flow first
+        tracker.start("appointment_flow")
+        try:
+            appointment_response = await appointment_service.handle_appointment_flow(
+                request.message, 
+                request.session_id, 
+                [{"role": msg.role, "content": msg.content} for msg in conversation_history]
+            )
+            
+            if appointment_response:
+                # Appointment was handled, use the appointment response
+                llm_response = appointment_response
+                logger.info(f"Appointment automatically handled for session {request.session_id}")
+            else:
+                # No appointment handling, proceed with normal LLM response
+                tracker.start("llm_processing")
+                llm_response = await gemini_service.generate_response(messages)
+                # Clean the response to remove formatting markers
+                llm_response = clean_llm_response(llm_response)
+                tracker.end("llm_processing")
+                
+                # Check if we should offer appointment scheduling
+                tracker.start("appointment_detection")
+                try:
+                    should_offer_scheduling = appointment_service.should_offer_scheduling(
+                        request.message, 
+                        [{"role": msg.role, "content": msg.content} for msg in conversation_history]
+                    )
+                    
+                    logger.info(f"Appointment detection - Message: '{request.message}', Should offer: {should_offer_scheduling}")
+                    
+                    if should_offer_scheduling:
+                        # Generate scheduling offer
+                        try:
+                            scheduling_offer = appointment_service.generate_scheduling_offer(llm_response)
+                            
+                            # Append scheduling offer to LLM response
+                            llm_response += f"\n\n{scheduling_offer}"
+                            
+                            logger.info(f"Added scheduling offer to response for session {request.session_id}: {scheduling_offer}")
+                        except Exception as e:
+                            logger.error(f"Error generating scheduling offer: {str(e)}")
+                            # Add a simple fallback offer
+                            fallback_offer = "Would you like to schedule a meeting with one of our associates? I can help you book an appointment."
+                            llm_response += f"\n\n{fallback_offer}"
+                            logger.info(f"Added fallback scheduling offer for session {request.session_id}")
+                except Exception as e:
+                    logger.error(f"Error in appointment detection: {str(e)}")
+                tracker.end("appointment_detection")
+        except Exception as e:
+            logger.error(f"Error in appointment flow: {str(e)}")
+            # Fallback to normal LLM processing
+            tracker.start("llm_processing")
+            llm_response = await gemini_service.generate_response(messages)
+            llm_response = clean_llm_response(llm_response)
+            tracker.end("llm_processing")
+        tracker.end("appointment_flow")
         
         # Save conversation to database
         tracker.start("save_conversation")
@@ -370,6 +506,7 @@ Always provide helpful, structured responses using the property data above with 
                 "load_history_time": tracker.get_duration("load_history"),
                 "rag_retrieval_time": tracker.get_duration("rag_retrieval"),
                 "llm_processing_time": tracker.get_duration("llm_processing"),
+                "appointment_detection_time": tracker.get_duration("appointment_detection"),
                 "save_conversation_time": tracker.get_duration("save_conversation")
             }
         )
@@ -1193,6 +1330,252 @@ async def upload_rag_documents(
     except Exception as e:
         logger.error(f"Upload error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+# Appointment Scheduling Endpoints
+
+@app.post("/schedule_appointment", response_model=AppointmentResponse)
+async def schedule_appointment(request: AppointmentRequest):
+    """
+    Schedule an appointment with an associate.
+    
+    Args:
+        request: Appointment request details
+        
+    Returns:
+        AppointmentResponse: Appointment confirmation
+    """
+    try:
+        logger.info(f"Scheduling appointment for session {request.session_id}")
+        response = await appointment_service.schedule_appointment(request)
+        return response
+        
+    except Exception as e:
+        logger.error(f"Appointment scheduling error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Appointment scheduling failed: {str(e)}")
+
+@app.get("/associates", response_model=List[AssociateInfo])
+async def get_associates():
+    """
+    Get list of available associates.
+    
+    Returns:
+        List[AssociateInfo]: List of available associates
+    """
+    try:
+        associates = await appointment_service.get_available_associates()
+        return associates
+        
+    except Exception as e:
+        logger.error(f"Get associates error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get associates: {str(e)}")
+
+@app.get("/associates/{associate_id}/availability", response_model=List[AvailabilitySlot])
+async def get_associate_availability(associate_id: str, days_ahead: int = 7):
+    """
+    Get availability slots for a specific associate.
+    
+    Args:
+        associate_id: ID of the associate
+        days_ahead: Number of days ahead to check
+        
+    Returns:
+        List[AvailabilitySlot]: Available time slots
+    """
+    try:
+        slots = await appointment_service.get_availability_slots(associate_id, days_ahead)
+        return slots
+        
+    except Exception as e:
+        logger.error(f"Get availability error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get availability: {str(e)}")
+
+@app.post("/scheduling_offer", response_model=SchedulingOfferResponse)
+async def generate_scheduling_offer(request: SchedulingOfferRequest):
+    """
+    Generate a scheduling offer based on conversation context.
+    
+    Args:
+        request: Scheduling offer request
+        
+    Returns:
+        SchedulingOfferResponse: Scheduling offer details
+    """
+    try:
+        # Get conversation history for context
+        conversation_history = await supabase_service.get_conversation_history(request.session_id)
+        
+        # Check if we should offer scheduling
+        should_offer = appointment_service.should_offer_scheduling(
+            request.user_message,
+            [{"role": msg.role, "content": msg.content} for msg in conversation_history]
+        )
+        
+        if should_offer:
+            # Generate offer message
+            offer_message = appointment_service.generate_scheduling_offer(request.context)
+            
+            # Get available associates
+            associates = await appointment_service.get_available_associates()
+            
+            # Get next available slots for first associate
+            next_slots = []
+            if associates:
+                next_slots = await appointment_service.get_availability_slots(associates[0].id, 3)
+                next_slots = next_slots[:3]  # Just first 3 slots
+            
+            return SchedulingOfferResponse(
+                should_offer=True,
+                offer_message=offer_message,
+                available_associates=associates,
+                next_available_slots=next_slots
+            )
+        else:
+            return SchedulingOfferResponse(
+                should_offer=False,
+                offer_message=None,
+                available_associates=[],
+                next_available_slots=[]
+            )
+            
+    except Exception as e:
+        logger.error(f"Scheduling offer error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate scheduling offer: {str(e)}")
+
+@app.post("/follow_up", response_model=FollowUpResponse)
+async def schedule_follow_up(request: FollowUpRequest):
+    """
+    Schedule a follow-up appointment.
+    
+    Args:
+        request: Follow-up request details
+        
+    Returns:
+        FollowUpResponse: Follow-up scheduling result
+    """
+    try:
+        follow_up_message = await appointment_service.suggest_follow_up(
+            request.session_id,
+            request.days_ahead
+        )
+        
+        if follow_up_message:
+            return FollowUpResponse(
+                success=True,
+                message=follow_up_message
+            )
+        else:
+            return FollowUpResponse(
+                success=False,
+                message="No follow-up suggestions available at this time."
+            )
+            
+    except Exception as e:
+        logger.error(f"Follow-up scheduling error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Follow-up scheduling failed: {str(e)}")
+
+@app.get("/appointments/{appointment_id}", response_model=AppointmentDetails)
+async def get_appointment_details(appointment_id: str):
+    """
+    Get details of a specific appointment.
+    
+    Args:
+        appointment_id: ID of the appointment
+        
+    Returns:
+        AppointmentDetails: Appointment details
+    """
+    try:
+        details = await appointment_service.get_appointment_details(appointment_id)
+        
+        if details:
+            return AppointmentDetails(**details)
+        else:
+            raise HTTPException(status_code=404, detail="Appointment not found")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get appointment details error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get appointment details: {str(e)}")
+
+@app.put("/appointments/{appointment_id}/cancel")
+async def cancel_appointment(appointment_id: str):
+    """
+    Cancel an appointment.
+    
+    Args:
+        appointment_id: ID of the appointment to cancel
+        
+    Returns:
+        Success confirmation
+    """
+    try:
+        success = await appointment_service.cancel_appointment(appointment_id)
+        
+        if success:
+            return {"success": True, "message": "Appointment cancelled successfully"}
+        else:
+            raise HTTPException(status_code=404, detail="Appointment not found or already cancelled")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Cancel appointment error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to cancel appointment: {str(e)}")
+
+@app.put("/appointments/{appointment_id}/reschedule")
+async def reschedule_appointment(appointment_id: str, new_time: datetime):
+    """
+    Reschedule an appointment to a new time.
+    
+    Args:
+        appointment_id: ID of the appointment
+        new_time: New scheduled time
+        
+    Returns:
+        Success confirmation
+    """
+    try:
+        success = await appointment_service.reschedule_appointment(appointment_id, new_time)
+        
+        if success:
+            return {"success": True, "message": "Appointment rescheduled successfully"}
+        else:
+            raise HTTPException(status_code=404, detail="Appointment not found or time conflict")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Reschedule appointment error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to reschedule appointment: {str(e)}")
+
+@app.get("/appointments/session/{session_id}", response_model=AppointmentListResponse)
+async def get_session_appointments(session_id: str):
+    """
+    Get all appointments for a specific session.
+    
+    Args:
+        session_id: Session identifier
+        
+    Returns:
+        AppointmentListResponse: List of appointments
+    """
+    try:
+        appointments = await supabase_service.get_appointments_by_session(session_id)
+        
+        appointment_details = []
+        for appointment in appointments:
+            appointment_details.append(AppointmentDetails(**appointment))
+        
+        return AppointmentListResponse(
+            appointments=appointment_details,
+            total_count=len(appointment_details),
+            filtered_count=len(appointment_details)
+        )
+        
+    except Exception as e:
+        logger.error(f"Get session appointments error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get session appointments: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

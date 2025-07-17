@@ -6,6 +6,9 @@
     <title>Voice Conversational AI</title>
     <link rel="stylesheet" href="css/style.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- Mapbox GL CSS & JS -->
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.css" rel="stylesheet">
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.js"></script>
 </head>
 <body>
     <div class="container">
@@ -23,12 +26,96 @@
                     Session: <span id="sessionId">user_001</span>
                 </div>
             </div>
+             
         </header>
 
         <!-- Main Content -->
         <div class="main-content">
             <!-- Sidebar for RAG Documents -->
             <aside class="sidebar">
+                  <!-- Appointment Scheduling Section (moved below header) -->
+               <section id="appointmentSchedulingSection">
+                <h2><i class="fas fa-calendar-alt"></i> Appointments</h2>
+                <div class="appointment-panel" id="appointmentPanel">
+                    <div class="appointment-quick-actions">
+                        <button id="viewAssociatesBtn" class="btn btn-outline">
+                            <i class="fas fa-users"></i> View Associates
+                        </button>
+                        <button id="scheduleAppointmentBtn" class="btn btn-primary">
+                            <i class="fas fa-calendar-plus"></i> Schedule Meeting
+                        </button>
+                       
+                    </div>
+                    
+                    
+                    <div class="appointment-form" id="appointmentForm" style="display: none;">
+                        <h4>Schedule Appointment</h4>
+                        <form id="appointmentBookingForm">
+                            <div class="form-group">
+                                <label for="associateSelect">Select Associate:</label>
+                                <select id="associateSelect" class="form-control">
+                                    <option value="">Loading associates...</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="appointmentDate">Date & Time:</label>
+                                <input type="datetime-local" id="appointmentDate" class="form-control" required>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="appointmentType">Type:</label>
+                                <select id="appointmentType" class="form-control">
+                                    <option value="consultation">Consultation</option>
+                                    <option value="viewing">Property Viewing</option>
+                                    <option value="follow-up">Follow-up</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="clientName">Your Name:</label>
+                                <input type="text" id="clientName" class="form-control" required>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="clientEmail">Email:</label>
+                                <input type="email" id="clientEmail" class="form-control" required>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="clientPhone">Phone (optional):</label>
+                                <input type="tel" id="clientPhone" class="form-control">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="appointmentNotes">Notes:</label>
+                                <textarea id="appointmentNotes" class="form-control" rows="2" placeholder="Any additional information..."></textarea>
+                            </div>
+                            
+                            <div class="form-actions">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="fas fa-calendar-check"></i> Book Appointment
+                                </button>
+                                <button type="button" id="cancelAppointmentForm" class="btn btn-secondary">
+                                    Cancel
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                    
+                    <div class="availability-slots" id="availabilitySlots" style="display: none;">
+                        <h4>Available Time Slots</h4>
+                        <div id="availabilityList" class="availability-list"></div>
+                    </div>
+                    
+                    <div class="upcoming-appointments" id="upcomingAppointments">
+                        <h4>Your Appointments</h4>
+                        <div id="appointmentsList" class="appointments-list">
+                            <p class="no-appointments">No upcoming appointments</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
                 <div class="sidebar-section">
                     <h3><i class="fas fa-upload"></i> Upload Documents</h3>
                     <div class="upload-area" id="uploadArea">
@@ -42,18 +129,29 @@
 
                 <div class="sidebar-section">
                     <h3><i class="fas fa-cog"></i> Settings</h3>
-                   
                     <div class="setting-item">
                         <label>
                             <input type="checkbox" id="autoPlay" checked> Auto-play responses
                         </label>
                     </div>
+                    
                     <div class="setting-item">
                         <label for="voiceSelect">Voice Selection:</label>
                         <select id="voiceSelect" class="form-control">
                             <option value="en-US-Standard-A">Loading voices...</option>
                         </select>
                     </div>
+                   
+                    
+                </div>
+            </aside>
+
+        
+
+            <!-- Chat Area -->
+            <main class="chat-container">
+                <div class="chat-header">
+                    <h2>Chat with AI</h2>
                     <div class="setting-item">
                         <label class="toggle-label">
                             <span class="toggle-text">
@@ -64,9 +162,7 @@
                                 <span class="toggle-slider"></span>
                             </div>
                         </label>
-                        <div class="setting-description">
-                            <small>Enable to speak in any language - it will be translated to English for processing and back to your language</small>
-                        </div>
+                       
                     </div>
                     <div class="setting-item">
                         <label class="toggle-label">
@@ -78,17 +174,7 @@
                                 <span class="toggle-slider"></span>
                             </div>
                         </label>
-                        <div class="setting-description">
-                            <small>Enable ReAct (Reasoning and Acting) for better numerical comparisons and complex queries</small>
-                        </div>
                     </div>
-                </div>
-            </aside>
-
-            <!-- Chat Area -->
-            <main class="chat-container">
-                <div class="chat-header">
-                    <h2>Chat with AI</h2>
                     <div class="chat-status">
                         <span id="chatStatus" class="status-indicator online">Online</span>
                     </div>
@@ -168,6 +254,16 @@
 
     <!-- Audio Element for Playback -->
     <audio id="audioPlayer" style="display: none;"></audio>
+ 
+    <!-- Floating Properties Map Widget -->
+    <button id="propertiesWidget" class="properties-widget" title="View Properties">
+        <i class="fas fa-map"></i>
+    </button>
+
+    <!-- Full-screen overlay for properties map -->
+    <div id="propertyMapOverlay" class="property-map-overlay" style="display:none;">
+        <div id="propertiesMap" class="properties-map"></div>
+    </div>
 
     <script src="js/app.js"></script>
 </body>

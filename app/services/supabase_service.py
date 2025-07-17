@@ -1036,4 +1036,303 @@ class SupabaseService:
             return response.data
         except Exception as e:
             logger.error(f"Error getting all chunks: {e}")
+            return []
+    
+    # Appointment Scheduling Methods
+    
+    async def get_unique_associates(self) -> List[Dict[str, Any]]:
+        """
+        Get unique associates from the database or property data.
+        
+        Returns:
+            List[Dict[str, Any]]: List of unique associates
+        """
+        try:
+            # Try to get from associates table first
+            result = await self._run_sync(
+                lambda: self.client.table("associates").select("*").eq("is_active", True).execute()
+            )
+            
+            if result.data:
+                return result.data
+            else:
+                # Fallback to getting from property data if associates table is empty
+                # This would typically extract unique associates from property records
+                return [
+                    {
+                        "id": "default-1",
+                        "name": "Sarah Johnson",
+                        "email": "sarah.johnson@example.com",
+                        "phone": "(555) 123-4567",
+                        "specialization": "Commercial Real Estate"
+                    },
+                    {
+                        "id": "default-2",
+                        "name": "Michael Chen", 
+                        "email": "michael.chen@example.com",
+                        "phone": "(555) 234-5678",
+                        "specialization": "Residential Real Estate"
+                    }
+                ]
+        except Exception as e:
+            logger.error(f"Error getting unique associates: {str(e)}")
+            # Return default associates on error
+            return [
+                {
+                    "id": "default-1",
+                    "name": "Sarah Johnson",
+                    "email": "sarah.johnson@example.com",
+                    "phone": "(555) 123-4567",
+                    "specialization": "Commercial Real Estate"
+                },
+                {
+                    "id": "default-2",
+                    "name": "Michael Chen",
+                    "email": "michael.chen@example.com", 
+                    "phone": "(555) 234-5678",
+                    "specialization": "Residential Real Estate"
+                }
+            ]
+    
+    async def get_associate_appointments(self, associate_id: str) -> List[Dict[str, Any]]:
+        """
+        Get appointments for a specific associate.
+        
+        Args:
+            associate_id: ID of the associate
+            
+        Returns:
+            List[Dict[str, Any]]: List of appointments
+        """
+        try:
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            
+            result = await self._run_sync(
+                lambda: self.client.table("appointments")
+                .select("*")
+                .eq("associate_id", associate_id)
+                .gte("scheduled_time", now.isoformat())
+                .in_("status", ["scheduled", "confirmed"])
+                .order("scheduled_time")
+                .execute()
+            )
+            
+            # Convert ISO strings back to datetime objects
+            appointments = []
+            for appointment in result.data:
+                appointment_copy = appointment.copy()
+                appointment_copy['scheduled_time'] = datetime.fromisoformat(appointment['scheduled_time'].replace('Z', '+00:00'))
+                appointments.append(appointment_copy)
+            
+            return appointments
+        except Exception as e:
+            logger.error(f"Error getting associate appointments: {str(e)}")
+            return []
+    
+    async def create_appointment(
+        self,
+        session_id: str,
+        associate_id: str,
+        user_name: str,
+        user_email: str,
+        user_phone: Optional[str],
+        scheduled_time: datetime,
+        appointment_type: str = "consultation",
+        notes: Optional[str] = None
+    ) -> str:
+        """
+        Create a new appointment.
+        
+        Args:
+            session_id: Session identifier
+            associate_id: ID of the associate
+            user_name: Name of the user
+            user_email: Email of the user
+            user_phone: Phone number of the user
+            scheduled_time: Scheduled time for the appointment
+            appointment_type: Type of appointment
+            notes: Additional notes
+            
+        Returns:
+            str: ID of the created appointment
+        """
+        try:
+            appointment_data = {
+                "session_id": session_id,
+                "associate_id": associate_id,
+                "user_name": user_name,
+                "user_email": user_email,
+                "user_phone": user_phone,
+                "scheduled_time": scheduled_time.isoformat(),
+                "appointment_type": appointment_type,
+                "notes": notes
+            }
+            
+            result = await self._run_sync(
+                lambda: self.client.table("appointments").insert(appointment_data).execute()
+            )
+            
+            if result.data:
+                return result.data[0]["id"]
+            else:
+                raise Exception("Failed to create appointment")
+                
+        except Exception as e:
+            logger.error(f"Error creating appointment: {str(e)}")
+            raise
+    
+    async def get_appointment_details(self, appointment_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get detailed information about an appointment.
+        
+        Args:
+            appointment_id: ID of the appointment
+            
+        Returns:
+            Optional[Dict[str, Any]]: Appointment details or None if not found
+        """
+        try:
+            result = await self._run_sync(
+                lambda: self.client.table("appointment_details")
+                .select("*")
+                .eq("id", appointment_id)
+                .execute()
+            )
+            
+            if result.data:
+                appointment = result.data[0]
+                # Convert ISO string back to datetime
+                appointment['scheduled_time'] = datetime.fromisoformat(appointment['scheduled_time'].replace('Z', '+00:00'))
+                return appointment
+            else:
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error getting appointment details: {str(e)}")
+            return None
+    
+    async def cancel_appointment(self, appointment_id: str) -> bool:
+        """
+        Cancel an appointment.
+        
+        Args:
+            appointment_id: ID of the appointment to cancel
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            result = await self._run_sync(
+                lambda: self.client.table("appointments")
+                .update({"status": "cancelled"})
+                .eq("id", appointment_id)
+                .execute()
+            )
+            
+            return len(result.data) > 0
+            
+        except Exception as e:
+            logger.error(f"Error canceling appointment: {str(e)}")
+            return False
+    
+    async def reschedule_appointment(self, appointment_id: str, new_time: datetime) -> bool:
+        """
+        Reschedule an appointment to a new time.
+        
+        Args:
+            appointment_id: ID of the appointment
+            new_time: New scheduled time
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            result = await self._run_sync(
+                lambda: self.client.table("appointments")
+                .update({"scheduled_time": new_time.isoformat()})
+                .eq("id", appointment_id)
+                .execute()
+            )
+            
+            return len(result.data) > 0
+            
+        except Exception as e:
+            logger.error(f"Error rescheduling appointment: {str(e)}")
+            return False
+    
+    async def get_appointments_by_session(self, session_id: str) -> List[Dict[str, Any]]:
+        """
+        Get all appointments for a specific session.
+        
+        Args:
+            session_id: Session identifier
+            
+        Returns:
+            List[Dict[str, Any]]: List of appointments
+        """
+        try:
+            result = await self._run_sync(
+                lambda: self.client.table("appointment_details")
+                .select("*")
+                .eq("session_id", session_id)
+                .order("scheduled_time")
+                .execute()
+            )
+            
+            # Convert ISO strings back to datetime objects
+            appointments = []
+            for appointment in result.data:
+                appointment_copy = appointment.copy()
+                appointment_copy['scheduled_time'] = datetime.fromisoformat(appointment['scheduled_time'].replace('Z', '+00:00'))
+                appointments.append(appointment_copy)
+            
+            return appointments
+            
+        except Exception as e:
+            logger.error(f"Error getting appointments by session: {str(e)}")
+            return []
+    
+    async def get_session_appointments(self, session_id: str) -> List[Dict[str, Any]]:
+        """
+        Get all appointments for a specific session.
+        
+        Args:
+            session_id: Session identifier
+            
+        Returns:
+            List[Dict[str, Any]]: List of appointments for the session
+        """
+        try:
+            result = await self._run_sync(
+                lambda: self.client.table("appointments")
+                .select("*")
+                .eq("session_id", session_id)
+                .order("created_at", desc=True)
+                .execute()
+            )
+            
+            appointments = []
+            if result.data:
+                for row in result.data:
+                    appointment = {
+                        "id": row["id"],
+                        "session_id": row["session_id"],
+                        "associate_id": row["associate_id"],
+                        "user_name": row["user_name"],
+                        "user_email": row["user_email"],
+                        "user_phone": row["user_phone"],
+                        "scheduled_time": row["scheduled_time"],
+                        "appointment_type": row["appointment_type"],
+                        "status": row["status"],
+                        "notes": row["notes"],
+                        "created_at": row["created_at"],
+                        "updated_at": row["updated_at"]
+                    }
+                    appointments.append(appointment)
+            
+            return appointments
+            
+        except Exception as e:
+            logger.error(f"Error getting session appointments: {str(e)}")
             return [] 

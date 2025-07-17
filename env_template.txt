@@ -4,15 +4,13 @@
 SUPABASE_URL=your-supabase-project-url
 SUPABASE_ANON_KEY=your-supabase-anon-key
 
-# Google Gemini AI Configuration - Multiple API keys for failover/rotation
-GEMINI_API_KEYS=your-gemini-api-key
-GEMINI_MODEL=gemini-2.5-flash
+# Cerebras AI Configuration - Multiple API keys for failover/rotation
+CEREBRAS_API_KEYS=sk-your-cerebras-key-1,sk-your-cerebras-key-2,sk-your-cerebras-key-3
+CEREBRAS_MODEL=llama-4-scout-77b-16e-instruct
 
-# Google Cloud Configuration
-GOOGLE_CLOUD_PROJECT_ID=your-google-cloud-project-id
-GOOGLE_CLOUD_SERVICE_ACCOUNT_PATH=path/to/your/service-account-key.json
-GOOGLE_CLOUD_DEFAULT_VOICE=en-US-Standard-A
-GOOGLE_CLOUD_LANGUAGE_CODE=en-US
+# Eleven Labs Configuration - Multiple API keys for failover/rotation
+ELEVENLABS_API_KEYS=your-elevenlabs-key-1,your-elevenlabs-key-2,your-elevenlabs-key-3
+ELEVENLABS_MODEL_ID=eleven_monolingual_v1
 
 # Embedding Model Configuration
 EMBEDDING_MODEL=all-MiniLM-L6-v2
@@ -20,7 +18,7 @@ EMBEDDING_MODEL=all-MiniLM-L6-v2
 # RAG Configuration
 CHUNK_SIZE=1000
 CHUNK_OVERLAP=200
-TOP_K_RESULTS=5
+TOP_K_RESULTS=15
 
 # API Configuration
 API_TITLE=Voice Conversational Agentic AI
@@ -28,8 +26,8 @@ API_VERSION=1.0.0
 DEBUG=false
 
 # File Upload Configuration
-MAX_FILE_SIZE=10485760
-ALLOWED_FILE_TYPES=pdf,txt,csv,json,docx,doc
+MAX_FILE_SIZE=10485760  # 10MB in bytes
+ALLOWED_FILE_TYPES=pdf,txt,csv,json
 
 # Conversation Configuration
 MAX_CONVERSATION_HISTORY=20 
