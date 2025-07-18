@@ -3,7 +3,8 @@
 class VoiceConversationalAI {
     constructor() {
         this.apiBaseUrl = 'http://localhost:8000';
-        this.sessionId = this.generateSessionId();
+        // this.sessionId = this.generateSessionId();
+        this.sessionId = "user_1752850278561_9e3jmp5od"; // <-- For testing, use a fixed session ID
         this.mapboxToken = 'pk.eyJ1Ijoic2FuamF5MDciLCJhIjoiY203M3M3ZHE3MDJ1cDJrcHh1aTZrd292NSJ9.J_dk3BJuJAW-wxqonaL8Xg'; // <-- Replace with real token
         this.map = null;
         this.propertyMarkers = {}; // stores markers by unique_id for quick access
@@ -850,31 +851,36 @@ class VoiceConversationalAI {
     }
 
     async viewAssociates() {
-        try {
-            const response = await fetch(`${this.apiBaseUrl}/associates`);
-            
-            if (response.ok) {
-                const associates = await response.json();
-                this.displayAssociates(associates);
-            } else {
-                console.error('Failed to load associates');
-                this.showNotification('Failed to load associates', 'error');
+        const associatesList = document.getElementById('associatesList');
+        // Toggle visibility
+        if (associatesList.style.display === 'block') {
+            associatesList.style.display = 'none';
+            associatesList.innerHTML = '';
+        } else {
+            associatesList.style.display = 'block';
+            try {
+                const response = await fetch(`${this.apiBaseUrl}/associates`);
+                if (response.ok) {
+                    const associates = await response.json();
+                    this.displayAssociates(associates);
+                } else {
+                    console.error('Failed to load associates');
+                    this.showToast('Failed to load associates', 'error');
+                }
+            } catch (error) {
+                console.error('Error loading associates:', error);
+                this.showToast('Error loading associates', 'error');
             }
-        } catch (error) {
-            console.error('Error loading associates:', error);
-            this.showNotification('Error loading associates', 'error');
         }
     }
 
     displayAssociates(associates) {
-        const associatesList = document.getElementById('appointmentsList');
+        const associatesList = document.getElementById('associatesList');
         associatesList.innerHTML = '';
-        
         if (associates.length === 0) {
             associatesList.innerHTML = '<p class="no-appointments">No associates available</p>';
             return;
         }
-        
         associates.forEach(associate => {
             const associateItem = document.createElement('div');
             associateItem.className = 'appointment-item';
@@ -926,23 +932,71 @@ class VoiceConversationalAI {
     }
 
     displayAvailabilitySlots(slots, associateId) {
+        const associatesList = document.getElementById('associatesList');
         const availabilityList = document.getElementById('availabilityList');
         const availabilitySlots = document.getElementById('availabilitySlots');
-        
-        availabilityList.innerHTML = '';
+        const backBtn = document.getElementById('backToAssociatesBtn');
+
+        // Hide associates list when showing slots
+        associatesList.style.display = 'none';
         availabilitySlots.style.display = 'block';
-        
+        backBtn.style.display = 'inline-block';
+
+        // Show back button handler
+        backBtn.onclick = () => {
+            availabilitySlots.style.display = 'none';
+            associatesList.style.display = 'block';
+            backBtn.style.display = 'none';
+            // Remove agent info when going back
+            const agentInfo = document.getElementById('selectedAgentInfo');
+            if (agentInfo) agentInfo.remove();
+        };
+
+        // Fetch agent info from the associates list DOM (if available)
+        let agent = null;
+        const associateItems = associatesList.querySelectorAll('.appointment-item');
+        associateItems.forEach(item => {
+            const btn = item.querySelector('.appointment-actions button');
+            if (btn && btn.getAttribute('onclick') && btn.getAttribute('onclick').includes(associateId)) {
+                agent = {
+                    name: item.querySelector('.appointment-title')?.textContent || '',
+                    specialization: item.querySelector('.appointment-status')?.textContent || '',
+                    email: item.querySelector('.fa-envelope')?.parentNode?.textContent.trim() || '',
+                    phone: item.querySelector('.fa-phone')?.parentNode?.textContent.trim() || '',
+                    hours: item.querySelector('.fa-clock')?.parentNode?.textContent.trim() || ''
+                };
+            }
+        });
+
+        // Show agent info above slots
+        let agentInfo = document.getElementById('selectedAgentInfo');
+        if (agentInfo) agentInfo.remove();
+        if (agent) {
+            agentInfo = document.createElement('div');
+            agentInfo.id = 'selectedAgentInfo';
+            agentInfo.className = 'selected-agent-info';
+            agentInfo.innerHTML = `
+                <div class="appointment-header">
+                    <div class="appointment-title">${agent.name}</div>
+                    <div class="appointment-status scheduled">${agent.specialization}</div>
+                </div>
+            `;
+            availabilitySlots.insertBefore(agentInfo, availabilitySlots.querySelector('h4'));
+        }
+
+        availabilityList.innerHTML = '';
+
         if (slots.length === 0) {
             availabilityList.innerHTML = '<p class="no-appointments">No available slots</p>';
             return;
         }
-        
+
         slots.forEach(slot => {
             const slotElement = document.createElement('div');
             slotElement.className = 'availability-slot';
             slotElement.dataset.associateId = associateId;
             slotElement.dataset.datetime = slot.datetime;
-            
+
             const slotDate = new Date(slot.datetime);
             const formattedDate = slotDate.toLocaleDateString('en-US', {
                 weekday: 'long',
@@ -954,12 +1008,12 @@ class VoiceConversationalAI {
                 hour: '2-digit',
                 minute: '2-digit'
             });
-            
+
             slotElement.innerHTML = `
                 <div class="availability-slot-time">${formattedDate} at ${formattedTime}</div>
                 <div class="availability-slot-associate">${slot.duration_minutes} minutes</div>
             `;
-            
+
             slotElement.addEventListener('click', () => this.selectTimeSlot(slotElement));
             availabilityList.appendChild(slotElement);
         });
@@ -1049,16 +1103,22 @@ class VoiceConversationalAI {
     displaySessionAppointments(appointments) {
         const appointmentsList = document.getElementById('appointmentsList');
         appointmentsList.innerHTML = '';
-        
+
+        // Track closed appointments in localStorage
+        const closedAppointments = JSON.parse(localStorage.getItem('closedAppointments') || '[]');
+
         if (appointments.length === 0) {
             appointmentsList.innerHTML = '<p class="no-appointments">No upcoming appointments</p>';
             return;
         }
-        
+
         appointments.forEach(appointment => {
+            // Skip if user has closed this appointment
+            if (closedAppointments.includes(appointment.id)) return;
+
             const appointmentItem = document.createElement('div');
             appointmentItem.className = 'appointment-item';
-            
+
             const appointmentDate = new Date(appointment.scheduled_time);
             const formattedDate = appointmentDate.toLocaleDateString('en-US', {
                 weekday: 'short',
@@ -1070,7 +1130,30 @@ class VoiceConversationalAI {
                 hour: '2-digit',
                 minute: '2-digit'
             });
-            
+
+            // Cancel button only if not cancelled
+            let actionsHtml = '';
+            if (appointment.status !== 'cancelled') {
+                actionsHtml = `
+                    <button class="btn btn-secondary" onclick="app.cancelAppointment('${appointment.id}')">
+                        <i class="fas fa-times"></i> Cancel
+                    </button>
+                    <button class="btn btn-outline" onclick="app.showAppointmentMessagesModal('${appointment.id}')">
+                        <i class="fas fa-comments"></i> Show Messages
+                    </button>
+                `;
+            } else {
+                // Show close button for cancelled appointments
+                actionsHtml = `
+                    <button class="btn btn-outline" onclick="app.closeAppointment('${appointment.id}', this)">
+                        <i class="fas fa-xmark"></i> Close
+                    </button>
+                    <button class="btn btn-outline" onclick="app.showAppointmentMessagesModal('${appointment.id}')">
+                        <i class="fas fa-comments"></i> Show Messages
+                    </button>
+                `;
+            }
+
             appointmentItem.innerHTML = `
                 <div class="appointment-header">
                     <div class="appointment-title">${appointment.appointment_type}</div>
@@ -1083,13 +1166,24 @@ class VoiceConversationalAI {
                     ${appointment.notes ? `<div><i class="fas fa-sticky-note"></i> ${appointment.notes}</div>` : ''}
                 </div>
                 <div class="appointment-actions">
-                    <button class="btn btn-secondary" onclick="app.cancelAppointment('${appointment.id}')">
-                        <i class="fas fa-times"></i> Cancel
-                    </button>
+                    ${actionsHtml}
                 </div>
             `;
             appointmentsList.appendChild(appointmentItem);
         });
+    }
+
+    // Add this new method to the class:
+    closeAppointment(appointmentId, btn) {
+        // Add to closed list in localStorage
+        let closedAppointments = JSON.parse(localStorage.getItem('closedAppointments') || '[]');
+        if (!closedAppointments.includes(appointmentId)) {
+            closedAppointments.push(appointmentId);
+            localStorage.setItem('closedAppointments', JSON.stringify(closedAppointments));
+        }
+        // Remove from UI
+        const appointmentItem = btn.closest('.appointment-item');
+        if (appointmentItem) appointmentItem.remove();
     }
 
     async cancelAppointment(appointmentId) {
@@ -1113,6 +1207,38 @@ class VoiceConversationalAI {
         } catch (error) {
             console.error('Error cancelling appointment:', error);
             this.showNotification('Error cancelling appointment', 'error');
+        }
+    }
+
+    // Add this method to your VoiceConversationalAI class in app.js
+
+    async showAppointmentMessagesModal(appointmentId) {
+        window.currentModalAppointmentId = appointmentId;
+        const modal = document.getElementById('conversation-modal');
+        const contentDiv = document.getElementById('conversation-content');
+        modal.style.display = 'flex';
+        contentDiv.innerHTML = '<p>Loading messages...</p>';
+        try {
+            const resp = await fetch(`${this.apiBaseUrl}/appointment/${appointmentId}/messages`);
+            if (!resp.ok) throw new Error('Failed to fetch messages');
+            const messages = await resp.json();
+            if (!messages.length) {
+                contentDiv.innerHTML = '<p>No messages for this appointment.</p>';
+                return;
+            }
+            let html = '<ul style="list-style:none; padding:0;">';
+            for (const msg of messages) {
+                const senderLabel = msg.user_type === "user" ? "User" : "Associate";
+                html += `<li style="margin-bottom:1em;">
+                    <b style="color:#4f8cff;">${senderLabel}:</b>
+                    <span>${msg.message}</span>
+                    <div style="font-size:0.9em; color:#888;">${new Date(msg.sent_at).toLocaleString()}</div>
+                </li>`;
+            }
+            html += '</ul>';
+            contentDiv.innerHTML = html;
+        } catch (err) {
+            contentDiv.innerHTML = `<p class="error">Error: ${err.message}</p>`;
         }
     }
 
@@ -1259,6 +1385,48 @@ class VoiceConversationalAI {
         }
     }
 }
+
+document.getElementById('closeAppointmentMessagesModal').onclick = function() {
+    document.getElementById('conversation-modal').style.display = 'none';
+}
+
+function closeModal() {
+    document.getElementById('conversation-modal').style.display = 'none';
+}
+
+document.getElementById('user-send-message-btn').onclick = async function() {
+    const input = document.getElementById('user-message-input');
+    const msg = input.value.trim();
+    if (!msg) return;
+    input.disabled = true;
+    this.disabled = true;
+    this.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    try {
+        // You need to know the appointmentId for the modal.
+        // Store it on modal open:
+        const appointmentId = window.currentModalAppointmentId;
+        const resp = await fetch(`${app.apiBaseUrl}/appointment/${appointmentId}/send_message`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                appointment_id: appointmentId,
+                message: msg,
+                user_type: 'user'
+            })
+        });
+        if (!resp.ok) throw new Error('Failed to send message');
+        input.value = '';
+        app.showToast('Message sent!', 'success');
+        // Optionally, reload messages:
+        app.showAppointmentMessagesModal(appointmentId);
+    } catch (err) {
+        app.showToast('Error: ' + err.message, 'error');
+    } finally {
+        input.disabled = false;
+        this.disabled = false;
+        this.innerHTML = '<i class="fas fa-paper-plane"></i> Send Message';
+    }
+};
 
 // Initialize the application
 const app = new VoiceConversationalAI();

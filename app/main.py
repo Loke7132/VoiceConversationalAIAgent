@@ -5,13 +5,14 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import asyncio
 import io
 import base64
 import re
 import csv
 from pathlib import Path
+from fastapi import Depends
 
 from .config import settings
 from .models import (
@@ -98,6 +99,14 @@ translation_service = TranslationService()
 rag_service = RAGService(supabase_service)
 react_service = ReActService(rag_service, supabase_service, gemini_service)
 appointment_service = AppointmentService(supabase_service)
+class AppointmentMessageRequest(BaseModel):
+    appointment_id: str
+    message: str
+    user_type: str = 'associate'
+
+class AppointmentMessageResponse(BaseModel):
+    id: str
+    sent_at: datetime
 
 # ---------------- Property Data -----------------
 
@@ -1472,6 +1481,85 @@ async def schedule_follow_up(request: FollowUpRequest):
     except Exception as e:
         logger.error(f"Follow-up scheduling error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Follow-up scheduling failed: {str(e)}")
+    
+
+@app.get("/agent/{associate_id}/appointments", response_model=AppointmentListResponse)
+async def get_agent_appointments(
+    associate_id: str,
+    days_ahead: int = 7
+):
+    """
+    Get all upcoming appointments for a specific associate (agent dashboard).
+    """
+    try:
+        # Get appointments for this associate for the next N days
+        now = datetime.now()
+        end_date = now + timedelta(days=days_ahead)
+        appointments = await supabase_service.get_associate_appointments_details(
+            associate_id, start_date=now, end_date=end_date
+        )
+        appointment_details = [AppointmentDetails(**a) for a in appointments]
+        return AppointmentListResponse(
+            appointments=appointment_details,
+            total_count=len(appointment_details),
+            filtered_count=len(appointment_details)
+        )
+    except Exception as e:
+        logger.error(f"Agent dashboard error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get agent appointments: {str(e)}")
+    
+@app.get("/agent/{associate_id}/appointment/{appointment_id}/conversation", response_model=List[ConversationMessage])
+async def get_appointment_conversation(
+    associate_id: str,
+    appointment_id: str
+):
+    """
+    Get conversation history for the user/session associated with a specific appointment.
+    """
+    try:
+        # Get appointment details to find session_id
+        appointment = await supabase_service.get_appointment_details(appointment_id)
+        if not appointment or appointment.get("associate_id") != associate_id:
+            raise HTTPException(status_code=404, detail="Appointment not found for this associate")
+        session_id = appointment.get("session_id")
+        print(f"Session ID for appointment {appointment_id}: {session_id}")
+        if not session_id:
+            raise HTTPException(status_code=404, detail="Session ID not found for appointment")
+        # Get conversation history
+        history = await supabase_service.get_conversation_history(session_id)
+        return history
+    except Exception as e:
+        logger.error(f"Get appointment conversation error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get conversation history: {str(e)}")
+
+@app.post("/appointment/{appointment_id}/send_message", response_model=AppointmentMessageResponse)
+async def appointment_send_message(request: AppointmentMessageRequest):
+    """
+    Agent sends a message to the user for a specific appointment.
+    """
+    try:
+        msg_id = await supabase_service.send_appointment_message(
+            request.appointment_id,
+            request.message,
+            request.user_type
+        )
+        return AppointmentMessageResponse(id=msg_id, sent_at=datetime.utcnow())
+    except Exception as e:
+        logger.error(f"Agent send message error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to send message: {str(e)}")
+
+@app.get("/appointment/{appointment_id}/messages")
+async def get_appointment_messages(appointment_id: str):
+    """
+    Get all appointment messages for an appointment.
+    """
+    try:
+        messages = await supabase_service.get_appointment_messages_for_appointment(appointment_id)
+        return messages
+    except Exception as e:
+        logger.error(f"Get appointment messages error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get messages: {str(e)}")
+
 
 @app.get("/appointments/{appointment_id}", response_model=AppointmentDetails)
 async def get_appointment_details(appointment_id: str):

@@ -1,6 +1,6 @@
 from supabase import create_client, Client
 from typing import List, Optional, Dict, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import uuid
 import asyncio
@@ -383,6 +383,97 @@ class SupabaseService:
         except Exception as e:
             logger.error(f"Error getting database stats: {str(e)}")
             raise
+
+    # Add this method to SupabaseService
+    async def get_associate_appointments_details(
+        self, 
+        associate_id: str, 
+        start_date: datetime = None, 
+        end_date: datetime = None
+    ) -> list:
+        """
+        Get appointment details for an associate between start_date and end_date.
+        
+        Args:
+            associate_id: ID of the associate
+            start_date: Start datetime (defaults to now)
+            end_date: End datetime (defaults to 7 days from start_date)
+        
+        Returns:
+            List of appointment dicts
+        """
+        try:
+            from datetime import datetime, timedelta, timezone
+            now = datetime.now(timezone.utc)
+            if not start_date:
+                start_date = now
+            if not end_date:
+                end_date = start_date + timedelta(days=7)
+            
+            result = await self._run_sync(
+                lambda: self.client.table("appointments")
+                .select("*")
+                .eq("associate_id", associate_id)
+                .gte("scheduled_time", start_date.isoformat())
+                .lte("scheduled_time", end_date.isoformat())
+                .in_("status", ["scheduled", "confirmed"])
+                .order("scheduled_time")
+                .execute()
+            )
+            
+            appointments = []
+            if result.data:
+                # Gather all appointment IDs
+                appointment_ids = [row["id"] for row in result.data]
+                # Fetch details concurrently
+                details_tasks = [
+                    self.get_appointment_details(appointment_id)
+                    for appointment_id in appointment_ids
+                ]
+                detailed_appointments = await asyncio.gather(*details_tasks)
+                # Filter out None results (in case some details are missing)
+                appointments = [appt for appt in detailed_appointments if appt is not None]
+            
+            return appointments
+        except Exception as e:
+            logger.error(f"Error getting associate appointments: {str(e)}")
+            return []
+
+    async def send_appointment_message(
+        self,
+        appointment_id: str,
+        message: str,
+        user_type: str = 'associate'
+    ) -> str:
+        """
+        Save a message from agent to user.
+        """
+        try:
+            def _save_msg():
+                response = self.client.table('appointment_messages').insert({
+                    'appointment_id': appointment_id,
+                    'message': message,
+                    'user_type': user_type,
+                }).execute()
+                return response.data[0]['id']
+            msg_id = await self._run_sync(_save_msg)
+            return msg_id
+        except Exception as e:
+            logger.error(f"Error sending agent message: {str(e)}")
+            raise
+
+    async def get_appointment_messages_for_appointment(self, appointment_id: str) -> list:
+        """
+        Get all appointment messages for a specific appointment.
+        """
+        try:
+            def _get_msgs():
+                resp = self.client.table('appointment_messages').select('*').eq('appointment_id', appointment_id).order('sent_at').execute()
+                return resp.data
+            return await self._run_sync(_get_msgs)
+        except Exception as e:
+            logger.error(f"Error fetching agent messages: {str(e)}")
+            return []
     
     async def hybrid_search(
         self,

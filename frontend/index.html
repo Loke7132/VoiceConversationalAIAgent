@@ -10,6 +10,21 @@
     <link href="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.css" rel="stylesheet">
     <script src="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.js"></script>
 </head>
+<!-- Conversation History Modal -->
+<div id="conversation-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.25); z-index:1000; align-items:center; justify-content:center;">
+    <span class="close" id="closeAppointmentMessagesModal">&times;</span>
+    <div style="background:#fff; border-radius:10px; max-width:600px; width:90vw; max-height:80vh; overflow:auto; padding:2em; box-shadow:0 8px 32px rgba(0,0,0,0.18); position:relative;">
+        <button onclick="closeModal()" style="position:absolute; top:1em; right:1em; background:#eee; border:none; border-radius:50%; width:2em; height:2em; font-size:1.2em; cursor:pointer;">&times;</button>
+        <h3>Conversation History</h3>
+        <div id="conversation-content"></div>
+        <div id="user-send-message" style="margin-top:1em; display:flex; gap:0.5em;">
+            <input type="text" id="user-message-input" placeholder="Type your message..." style="flex:1; padding:0.5em; border-radius:5px; border:1px solid #ccc;">
+            <button id="user-send-message-btn" class="btn btn-primary">
+                <i class="fas fa-paper-plane"></i> Send Message
+            </button>
+        </div>
+    </div>
+</div>
 <body>
     <div class="container">
         <!-- Header -->
@@ -104,9 +119,14 @@
                     </div>
                     
                     <div class="availability-slots" id="availabilitySlots" style="display: none;">
+                        <button id="backToAssociatesBtn" class="btn btn-secondary" style="margin-bottom:10px;display:none;">
+                            <i class="fas fa-arrow-left"></i> Back to Associates
+                        </button>
                         <h4>Available Time Slots</h4>
                         <div id="availabilityList" class="availability-list"></div>
                     </div>
+
+                    <div id="associatesList" class="associates-list" style="display: none;"></div>
                     
                     <div class="upcoming-appointments" id="upcomingAppointments">
                         <h4>Your Appointments</h4>

@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Agent Appointment Dashboard</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            margin: 0;
+            background: #f4f6fb;
+            color: #222;
+        }
+        .dashboard-container {
+            max-width: 900px;
+            margin: 40px auto;
+            background: #fff;
+            border-radius: 14px;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+            padding: 2.5em 2.5em 2em 2.5em;
+        }
+        h2 {
+            margin-top: 0;
+            font-size: 2.1em;
+            font-weight: 600;
+            color: #2a3b5d;
+            letter-spacing: 1px;
+        }
+        #agent-form {
+            display: flex;
+            align-items: flex-end;
+            gap: 1em;
+            margin-bottom: 2em;
+        }
+        #agent-form label {
+            font-size: 1.1em;
+            color: #3a4a6b;
+            font-weight: 500;
+        }
+        #agent-id {
+            padding: 0.6em 1em;
+            border: 1px solid #bfc9da;
+            border-radius: 6px;
+            font-size: 1em;
+            background: #f8fafc;
+            transition: border 0.2s;
+        }
+        #agent-id:focus {
+            border: 1.5px solid #4f8cff;
+            outline: none;
+            background: #fff;
+        }
+        #agent-form button {
+            padding: 0.6em 1.5em;
+            background: linear-gradient(90deg, #4f8cff 60%, #3e6edb 100%);
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(79,140,255,0.08);
+            transition: background 0.2s;
+        }
+        #agent-form button:hover {
+            background: linear-gradient(90deg, #3e6edb 60%, #4f8cff 100%);
+        }
+        #appointments {
+            margin-top: 2em;
+        }
+        table {
+            border-collapse: separate;
+            border-spacing: 0;
+            width: 100%;
+            background: #f8fafc;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 2px 12px rgba(44,62,80,0.04);
+        }
+        th, td {
+            padding: 1em 0.8em;
+            text-align: left;
+        }
+        th {
+            background: #eaf1fb;
+            color: #2a3b5d;
+            font-size: 1.05em;
+            font-weight: 600;
+            border-bottom: 2px solid #dbe7fa;
+        }
+        tr {
+            transition: background 0.15s;
+        }
+        tr:nth-child(even) td {
+            background: #f4f6fb;
+        }
+        tr:hover td {
+            background: #e3eefd;
+        }
+        td {
+            font-size: 1em;
+            color: #2a3b5d;
+            border-bottom: 1px solid #e3eefd;
+        }
+        .error {
+            color: #e74c3c;
+            background: #fff2f0;
+            padding: 0.8em 1em;
+            border-radius: 6px;
+            margin-top: 1em;
+            font-weight: 500;
+            border: 1px solid #f5c6cb;
+        }
+        @media (max-width: 700px) {
+            .dashboard-container {
+                padding: 1em 0.5em;
+            }
+            table, thead, tbody, th, td, tr {
+                display: block;
+            }
+            th, td {
+                padding: 0.7em 0.5em;
+            }
+            th {
+                border-bottom: none;
+            }
+            tr {
+                margin-bottom: 1em;
+                border-radius: 8px;
+                box-shadow: 0 1px 4px rgba(44,62,80,0.06);
+            }
+        }
+    #conversation-modal {
+        display: none;
+        position: fixed;
+        top: 0; left: 0;
+        width: 100vw; height: 100vh;
+        background: rgba(30, 42, 70, 0.18);
+        z-index: 1000;
+        align-items: center;
+        justify-content: center;
+        animation: fadeInModalBg 0.25s;
+    }
+    #conversation-modal.active {
+        display: flex;
+    }
+    #conversation-modal > div {
+        background: #fff;
+        border-radius: 16px;
+        max-width: 650px;
+        width: 95vw;
+        max-height: 85vh;
+        overflow-y: auto;
+        padding: 2.5em 2em 2em 2em;
+        box-shadow: 0 12px 48px rgba(44,62,80,0.18);
+        position: relative;
+        animation: popInModal 0.22s;
+        border: 1.5px solid #eaf1fb;
+    }
+    #conversation-modal h3 {
+        margin-top: 0;
+        font-size: 1.5em;
+        color: #2a3b5d;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        margin-bottom: 1.2em;
+    }
+    #conversation-modal button[onclick="closeModal()"] {
+        position: absolute;
+        top: 1.1em;
+        right: 1.1em;
+        background: #f4f6fb;
+        border: none;
+        border-radius: 50%;
+        width: 2.2em;
+        height: 2.2em;
+        font-size: 1.3em;
+        color: #3e6edb;
+        cursor: pointer;
+        box-shadow: 0 2px 8px rgba(44,62,80,0.06);
+        transition: background 0.18s, color 0.18s;
+    }
+    #conversation-modal button[onclick="closeModal()"]:hover {
+        background: #eaf1fb;
+        color: #e74c3c;
+    }
+    #conversation-content ul {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+    #conversation-content li {
+        margin-bottom: 1.3em;
+        padding: 1em 1.2em;
+        background: #f8fafc;
+        border-radius: 8px;
+        box-shadow: 0 1px 4px rgba(44,62,80,0.04);
+        border-left: 4px solid #4f8cff;
+        transition: background 0.18s;
+    }
+    #conversation-content li:hover {
+        background: #eaf1fb;
+    }
+    #conversation-content b {
+        color: #3e6edb;
+        font-weight: 600;
+        margin-right: 0.5em;
+        font-size: 1.05em;
+    }
+    #conversation-content span {
+        font-size: 1.07em;
+        color: #2a3b5d;
+    }
+    #conversation-content div {
+        font-size: 0.93em;
+        color: #888;
+        margin-top: 0.3em;
+    }
+    @keyframes fadeInModalBg {
+        from { background: rgba(30,42,70,0); }
+        to { background: rgba(30,42,70,0.18); }
+    }
+    @keyframes popInModal {
+        from { transform: scale(0.97) translateY(30px); opacity: 0; }
+        to { transform: scale(1) translateY(0); opacity: 1; }
+    }
+    @media (max-width: 700px) {
+        #conversation-modal > div {
+            padding: 1.2em 0.5em 1em 0.5em;
+            max-width: 99vw;
+        }
+        #conversation-modal h3 {
+            font-size: 1.15em;
+        }
+        #conversation-content li {
+            padding: 0.7em 0.5em;
+        }
+    }
+    .appointment-action-btn {
+    padding: 0.5em 1.2em;
+    background: linear-gradient(90deg, #4f8cff 60%, #3e6edb 100%);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.98em;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 1px 6px rgba(79,140,255,0.08);
+    transition: background 0.18s, color 0.18s, box-shadow 0.18s;
+    margin: 0.1em 0;
+    outline: none;
+}
+.appointment-action-btn:hover, .appointment-action-btn:focus {
+    background: linear-gradient(90deg, #3e6edb 60%, #4f8cff 100%);
+    color: #fff;
+    box-shadow: 0 2px 12px rgba(44,62,80,0.10);
+}
+    </style>
+</head>
+<!-- Conversation History Modal -->
+<div id="conversation-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.25); z-index:1000; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:10px; max-width:600px; width:90vw; max-height:80vh; overflow:auto; padding:2em; box-shadow:0 8px 32px rgba(0,0,0,0.18); position:relative;">
+        <button onclick="closeModal()" style="position:absolute; top:1em; right:1em; background:#eee; border:none; border-radius:50%; width:2em; height:2em; font-size:1.2em; cursor:pointer;">&times;</button>
+        <h3>Conversation History</h3>
+        <div id="conversation-content"></div>
+        <div id="user-send-message" style="margin-top:1em; display:flex; gap:0.5em;">
+            <input type="text" id="user-message-input" placeholder="Type your message..." style="flex:1; padding:0.5em; border-radius:5px; border:1px solid #ccc;">
+            <button id="user-send-message-btn" class="btn btn-primary">
+                <i class="fas fa-paper-plane"></i> Send Message
+            </button>
+        </div>
+    </div>
+</div>
+
+<body>
+    <div class="dashboard-container">
+        <h2>Agent Appointment Dashboard</h2>
+        <form id="agent-form">
+            <label for="agent-id">Enter your Associate ID:</label>
+            <input type="text" id="agent-id" required>
+            <button type="submit">View Appointments</button>
+        </form>
+        <div id="appointments"></div>
+    </div>
+    <script>
+        const apiBaseUrl = 'http://localhost:8000';
+        let currentConversation = { associateId: null, appointmentId: null };
+
+        async function fetchAppointments(agentId) {
+            const appointmentsDiv = document.getElementById('appointments');
+            appointmentsDiv.innerHTML = '<p>Loading appointments...</p>';
+            try {
+                const resp = await fetch(`${apiBaseUrl}/agent/${agentId}/appointments`);
+                if (!resp.ok) throw new Error('Failed to fetch appointments');
+                const data = await resp.json();
+                let html = `<table>
+                    <tr>
+                        <th>Date & Time</th>
+                        <th>User Name</th>
+                        <th>User Email</th>
+                        <th>User Phone</th>
+                        <th>Type</th>
+                        <th>Status</th>
+                        <th>Notes</th>
+                        <th>Actions</th>
+                    </tr>`;
+                for (const appt of data.appointments) {
+                    html += `<tr>
+                        <td>${new Date(appt.scheduled_time).toLocaleString()}</td>
+                        <td>${appt.user_name}</td>
+                        <td>${appt.user_email}</td>
+                        <td>${appt.user_phone || ''}</td>
+                        <td>${appt.appointment_type}</td>
+                        <td>${appt.status}</td>
+                        <td>${appt.notes || ''}</td>
+                        <td>
+                            <button class="appointment-action-btn" onclick="showConversation('${appt.associate_id}','${appt.id}')">View Conversation History</button>
+                            <button class="appointment-action-btn" onclick="showAppointmentMessagesModal('${appt.id}')">Send Message</button>
+                        </td>
+                    </tr>`;
+                }
+                html += '</table>';
+                appointmentsDiv.innerHTML = html;
+            } catch (err) {
+                appointmentsDiv.innerHTML = `<p class="error">Error: ${err.message}</p>`;
+            }
+        }
+        document.getElementById('agent-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const agentId = document.getElementById('agent-id').value.trim();
+            const appointmentsDiv = document.getElementById('appointments');
+            if (!agentId) {
+                appointmentsDiv.innerHTML = '<p class="error">Please enter your Associate ID.</p>';
+                return;
+            }
+            await fetchAppointments(agentId);
+        });
+        function closeModal() {
+            document.getElementById('conversation-modal').style.display = 'none';
+            document.getElementById('conversation-content').innerHTML = '';
+        }
+
+        async function showConversation(associateId, appointmentId) {
+            currentConversation = { associateId, appointmentId };
+            const modal = document.getElementById('conversation-modal');
+            const contentDiv = document.getElementById('conversation-content');
+            modal.style.display = 'flex';
+            contentDiv.innerHTML = '<p>Loading conversation...</p>';
+            document.getElementById('user-send-message').style.display = 'none';
+            try {
+                const resp = await fetch(`${apiBaseUrl}/agent/${associateId}/appointment/${appointmentId}/conversation`);
+                if (!resp.ok) throw new Error('Failed to fetch conversation');
+                const data = await resp.json();
+                if (!data.length) {
+                    contentDiv.innerHTML = '<p>No conversation history found.</p>';
+                    return;
+                }
+                let html = '<ul style="list-style:none; padding:0;">';
+                for (const msg of data) {
+                    html += `<li style="margin-bottom:1em;">
+                        <b style="color:#4f8cff;">${msg.role}:</b>
+                        <span>${msg.content}</span>
+                        <div style="font-size:0.9em; color:#888;">${new Date(msg.timestamp).toLocaleString()}</div>
+                    </li>`;
+                }
+                html += '</ul>';
+                contentDiv.innerHTML = html;
+            } catch (err) {
+                contentDiv.innerHTML = `<p class="error">Error: ${err.message}</p>`;
+            }
+        }
+
+        async function showAppointmentMessagesModal(appointmentId) {
+            window.currentModalAppointmentId = appointmentId;
+            const modal = document.getElementById('conversation-modal');
+            const contentDiv = document.getElementById('conversation-content');
+            document.getElementById('user-send-message').style.display = 'flex';
+            modal.style.display = 'flex';
+            contentDiv.innerHTML = '<p>Loading messages...</p>';
+            try {
+                const resp = await fetch(`${apiBaseUrl}/appointment/${appointmentId}/messages`);
+                if (!resp.ok) throw new Error('Failed to fetch messages');
+                const messages = await resp.json();
+                if (!messages.length) {
+                    contentDiv.innerHTML = '<p>No messages for this appointment.</p>';
+                    return;
+                }
+                let html = '<ul style="list-style:none; padding:0;">';
+                for (const msg of messages) {
+                    const senderLabel = msg.user_type === "user" ? "User" : "Associate";
+                    html += `<li style="margin-bottom:1em;">
+                        <b style="color:#4f8cff;">${senderLabel}:</b>
+                        <span>${msg.message}</span>
+                        <div style="font-size:0.9em; color:#888;">${new Date(msg.sent_at).toLocaleString()}</div>
+                    </li>`;
+                }
+                html += '</ul>';
+                contentDiv.innerHTML = html;
+            } catch (err) {
+                contentDiv.innerHTML = `<p class="error">Error: ${err.message}</p>`;
+            }
+        }
+
+        document.getElementById('user-send-message-btn').onclick = async function() {
+            const input = document.getElementById('user-message-input');
+            const msg = input.value.trim();
+            if (!msg) return;
+            input.disabled = true;
+            this.disabled = true;
+            this.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            try {
+                // You need to know the appointmentId for the modal.
+                // Store it on modal open:
+                const appointmentId = window.currentModalAppointmentId;
+                const resp = await fetch(`${apiBaseUrl}/appointment/${appointmentId}/send_message`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        appointment_id: appointmentId,
+                        message: msg,
+                        user_type: 'associate'
+                    })
+                });
+                if (!resp.ok) throw new Error('Failed to send message');
+                input.value = '';
+                // app.showToast('Message sent!', 'success');
+                // Optionally, reload messages:
+                showAppointmentMessagesModal(appointmentId);
+            } catch (err) {
+                app.showToast('Error: ' + err.message, 'error');
+            } finally {
+                input.disabled = false;
+                this.disabled = false;
+                this.innerHTML = '<i class="fas fa-paper-plane"></i> Send Message';
+            }
+        };
+    </script>
+</body>
+</html>
