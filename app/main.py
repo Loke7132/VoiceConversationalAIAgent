@@ -39,7 +39,10 @@ from .models import (
     AvailabilitySlot,
     AppointmentDetails,
     AppointmentListRequest,
-    AppointmentListResponse
+    AppointmentListResponse,
+    PropertyEngageRequest,
+    TrendingResponse,
+    DocumentCountResponse
 )
 from .services.supabase_service import SupabaseService
 from .services.gemini_service import GeminiService
@@ -1664,6 +1667,24 @@ async def get_session_appointments(session_id: str):
     except Exception as e:
         logger.error(f"Get session appointments error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get session appointments: {str(e)}")
+
+@app.post("/properties/engage")
+async def record_property_engagement(request: PropertyEngageRequest):
+    """Record a view/click/mention engagement for a property."""
+    await supabase_service.record_property_event(request.property_id, request.event_type, request.session_id)
+    return {"success": True}
+
+@app.get("/properties/trending", response_model=TrendingResponse)
+async def get_trending_properties(limit: int = 10):
+    """Return trending properties based on recent engagements."""
+    trending = await supabase_service.get_trending_properties(limit=limit)
+    return TrendingResponse(trending=trending)
+
+# Documents count endpoint
+@app.get("/documents/count", response_model=DocumentCountResponse)
+async def get_document_count():
+    count = await supabase_service.get_document_count()
+    return DocumentCountResponse(count=count)
 
 if __name__ == "__main__":
     import uvicorn

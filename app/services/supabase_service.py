@@ -359,6 +359,17 @@ class SupabaseService:
             logger.error(f"Error getting all documents: {str(e)}")
             raise
     
+    async def get_document_count(self) -> int:
+        """Return total number of rows in documents table."""
+        try:
+            def _count():
+                response = self.client.table('documents').select('id', count='exact').execute()
+                return response.count if hasattr(response, 'count') else len(response.data)
+            return await self._run_sync(_count)
+        except Exception as e:
+            logger.error(f"Error getting document count: {e}")
+            return 0
+    
     async def get_database_stats(self) -> Dict[str, int]:
         """
         Get database statistics.
@@ -1427,3 +1438,48 @@ class SupabaseService:
         except Exception as e:
             logger.error(f"Error getting session appointments: {str(e)}")
             return [] 
+
+    async def record_property_event(self, property_id: int, event_type: str, session_id: str):
+        """Record a view/click/mention event for a property."""
+        if event_type not in {"view", "click", "mention"}:
+            logger.warning("Invalid event type %s", event_type)
+            return
+        try:
+            def _insert():
+                self.client.table('property_engagements').insert({
+                    'property_id': property_id,
+                    'event_type': event_type,
+                    'session_id': session_id
+                }).execute()
+            await self._run_sync(_insert)
+        except Exception as e:
+            logger.error("Error recording property event: %s", e)
+
+    async def get_trending_properties(self, limit: int = 10, lookback_hours: int = 168):
+        """Return trending properties based on engagement in last lookback_hours."""
+        from datetime import datetime, timedelta
+        since_time = (datetime.utcnow() - timedelta(hours=lookback_hours)).isoformat()
+        try:
+            def _fetch():
+                return self.client.table('property_engagements')\
+                    .select('*')\
+                    .gte('created_at', since_time).execute().data
+            rows = await self._run_sync(_fetch)
+        except Exception as e:
+            logger.error("Error fetching engagements: %s", e)
+            rows = []
+
+        # Aggregation
+        weights = {"view": 1, "click": 2, "mention": 3}
+        score_map = {}
+        for r in rows:
+            pid = r['property_id']
+            wt = weights.get(r['event_type'], 0)
+            score_map[pid] = score_map.get(pid, 0) + wt
+
+        # sort
+        ranked = sorted(score_map.items(), key=lambda x: x[1], reverse=True)[:limit]
+        # Map id -> address using cached properties
+        from ..main import _load_properties  # lazy import to avoid circular
+        props = {p.unique_id: p.address for p in _load_properties()}
+        return [{"property_id": pid, "address": props.get(pid, "Unknown"), "score": score} for pid, score in ranked] 

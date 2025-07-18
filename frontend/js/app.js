@@ -14,23 +14,27 @@ class VoiceConversationalAI {
         this.audioChunks = [];
         this.uploadedDocuments = 0;
         this.propertyList = [];
+        this.trendingRAF = null;
         
         this.init();
     }
 
-    generateSessionId() {
+    /* generateSessionId() {
         return 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-    }
+    }*/
 
     init() {
         this.setupEventListeners();
         this.updateSessionDisplay();
         this.checkApiStatus();
+        this.loadDocumentCount();
         this.setupAudioRecording();
         this.loadAvailableVoices();
         this.setupAppointmentScheduling();
         // Preload property list for linkification
         this.preloadProperties();
+        this.loadTrendingProperties();
+        // CSS marquee will handle auto-scroll after trending list loads
         // Delegated click inside chat messages for "View Live Map" links
         const chatMsgContainer = document.getElementById('chatMessages');
         if (chatMsgContainer) {
@@ -42,6 +46,23 @@ class VoiceConversationalAI {
                     if (propId) {
                         this.showPropertyOnMap(propId);
                     }
+                }
+            });
+        }
+        // Trending bar click delegation
+        const trendingScroller = document.getElementById('trendingScroller');
+        if (trendingScroller) {
+            trendingScroller.addEventListener('click', (e) => {
+                const chip = e.target.closest('.trending-chip');
+                if (chip) {
+                    const pid = chip.dataset.propId;
+                    const addr = chip.dataset.addr;
+                    this.recordPropertyEngagement(pid, 'click');
+                    const messageInput = document.getElementById('messageInput');
+                    if (messageInput) {
+                        messageInput.value = `Tell me more about this property - ${addr}`;
+                    }
+                    this.sendMessage();
                 }
             });
         }
@@ -442,7 +463,8 @@ class VoiceConversationalAI {
             });
 
             this.uploadedDocuments += successCount;
-            this.updateStatus('documentCount', this.uploadedDocuments.toString(), '');
+            // Refresh document count from server
+            this.loadDocumentCount();
 
             if (successCount > 0) {
                 this.showToast(`Successfully uploaded ${successCount} document(s)`, 'success');
@@ -1347,6 +1369,58 @@ class VoiceConversationalAI {
         if (marker && marker.togglePopup) {
             marker.togglePopup();
         }
+        // record a view
+        this.recordPropertyEngagement(propId, 'view');
+    }
+
+    /* Record engagement */
+    async recordPropertyEngagement(propId, eventType) {
+        try {
+            await fetch(`${this.apiBaseUrl}/properties/engage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ property_id: parseInt(propId), event_type: eventType, session_id: this.sessionId })
+            });
+        } catch (err) {
+            console.warn('Failed to record engagement', err);
+        }
+    }
+
+    /* Load trending properties and render chips */
+    async loadTrendingProperties() {
+        try {
+            const resp = await fetch(`${this.apiBaseUrl}/properties/trending`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+            const list = data.trending || [];
+            const bar = document.getElementById('trendingBar');
+            const scroller = document.getElementById('trendingScroller');
+            if (list.length === 0) {
+                bar.style.display = 'none';
+                return;
+            }
+            bar.style.display = 'block';
+            scroller.innerHTML = '';
+            const track = document.createElement('div');
+            track.className = 'marquee-track';
+            list.forEach(item => {
+                const chip = document.createElement('div');
+                chip.className = 'trending-chip';
+                chip.textContent = item.address;
+                chip.dataset.propId = item.property_id;
+                chip.dataset.addr = item.address;
+                track.appendChild(chip);
+            });
+            // duplicate once for seamless loop
+            track.querySelectorAll('.trending-chip').forEach(chip => {
+                track.appendChild(chip.cloneNode(true));
+            });
+
+            scroller.appendChild(track);
+
+        } catch(err) {
+            console.warn('Failed to load trending properties', err);
+        }
     }
 
     /* Replace property addresses in assistant messages with live map links */
@@ -1362,12 +1436,14 @@ class VoiceConversationalAI {
             if (seen.has(addrKey)) continue; // already added link for this address
             // Escape address for use in regex
             const escaped = prop.address.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const regex = new RegExp(escaped, 'gi');
+            const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
             if (regex.test(result)) {
                 result = result.replace(regex, (match) => {
                     return `${match} <a href="#" class="view-property-link" data-prop-id="${prop.unique_id}">[View Map]</a>`;
                 });
                 seen.add(addrKey);
+                // record mention once per message
+                this.recordPropertyEngagement(prop.unique_id, 'mention');
             }
         }
         return result;
@@ -1384,6 +1460,20 @@ class VoiceConversationalAI {
             console.warn('Could not preload properties:', err);
         }
     }
+
+    async loadDocumentCount() {
+        try {
+            const resp = await fetch(`${this.apiBaseUrl}/documents/count`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+            const elem = document.getElementById('documentCount');
+            if (elem) elem.textContent = data.count;
+        } catch(err) {
+            console.warn('Failed to load document count', err);
+        }
+    }
+
+    // Remove startTrendingAutoScroll method entirely and its usage.
 }
 
 document.getElementById('closeAppointmentMessagesModal').onclick = function() {

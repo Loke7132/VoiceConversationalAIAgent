@@ -34,7 +34,7 @@ def main():
     os.chdir(frontend_dir)
     
     # Configuration
-    port = 8080
+    port = 3000
     host = 'localhost'
     
     print("🌐 Voice Conversational AI - Frontend Server")

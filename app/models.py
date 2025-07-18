@@ -267,3 +267,21 @@ class AppointmentListResponse(BaseModel):
     appointments: List[AppointmentDetails]
     total_count: int
     filtered_count: int 
+
+# Trending Properties
+
+class PropertyEngageRequest(BaseModel):
+    property_id: int = Field(..., description="unique_id of property engaged with")
+    event_type: str = Field(..., description="view | click | mention")
+    session_id: str = Field(..., description="Session ID")
+
+class TrendingProperty(BaseModel):
+    property_id: int
+    address: str
+    score: int
+
+class TrendingResponse(BaseModel):
+    trending: List[TrendingProperty] 
+
+class DocumentCountResponse(BaseModel):
+    count: int 
