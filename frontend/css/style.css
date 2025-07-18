@@ -1398,3 +1398,28 @@ body {
     color: #fff;
     box-shadow: 0 2px 12px rgba(44,62,80,0.10);
 }
+
+#user-send-message-btn {
+    padding: 0.55em 1.5em;
+    background: linear-gradient(90deg, #4f8cff 60%, #3e6edb 100%);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 1em;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(79,140,255,0.10);
+    transition: background 0.18s, color 0.18s, box-shadow 0.18s;
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+}
+#user-send-message-btn:hover, #user-send-message-btn:focus {
+    background: linear-gradient(90deg, #3e6edb 60%, #4f8cff 100%);
+    color: #fff;
+    box-shadow: 0 4px 16px rgba(44,62,80,0.13);
+}
+#user-send-message-btn i {
+    font-size: 1.1em;
+    margin-right: 0.3em;
+}
