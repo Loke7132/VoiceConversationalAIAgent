@@ -10,12 +10,14 @@ google-auth-oauthlib>=1.2.0
 google-auth-httplib2>=0.2.0
 google-api-python-client>=2.108.0
 requests>=2.31.0
-sentence-transformers>=2.2.2
+# Use lighter alternatives
+sentence-transformers[torch]>=2.2.2
 langchain>=0.1.0
 langchain-community>=0.0.10
 pypdf>=3.17.4
-pandas>=2.1.4
-numpy>=1.24.3
+# Remove pandas and numpy if not essential
+# pandas>=2.1.4
+# numpy>=1.24.3
 python-dotenv>=1.0.0
 aiofiles>=23.2.1
 httpx>=0.26.0
