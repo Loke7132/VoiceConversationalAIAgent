@@ -889,13 +889,29 @@ class AppointmentService:
             # Validate the request
             if not request.associate_id or not request.scheduled_time:
                 raise ValueError("Associate ID and scheduled time are required")
-            
+
+            # Standardise scheduled_time:
+            #   • If the incoming time is naive, assume it is in the app's configured local_timezone.
+            #   • Convert that value to UTC for conflict-checking & storage.
+            from datetime import timezone
+            from zoneinfo import ZoneInfo
+
+            local_tz = ZoneInfo(getattr(settings, "local_timezone", "UTC"))
+
+            if request.scheduled_time.tzinfo is None or request.scheduled_time.tzinfo.utcoffset(request.scheduled_time) is None:
+                scheduled_local = request.scheduled_time.replace(tzinfo=local_tz)
+            else:
+                # already timezone-aware; keep as local for response
+                scheduled_local = request.scheduled_time.astimezone(local_tz)
+
+            scheduled_time_utc = scheduled_local.astimezone(timezone.utc)
+ 
             # Check if the slot is still available
             appointments = await self.supabase_service.get_associate_appointments(request.associate_id)
-            
+ 
             # Check for conflicts
             for appointment in appointments:
-                time_diff = abs((appointment['scheduled_time'] - request.scheduled_time).total_seconds())
+                time_diff = abs((appointment['scheduled_time'] - scheduled_time_utc).total_seconds())
                 if time_diff < 3600:  # Within 1 hour
                     return AppointmentResponse(
                         success=False,
@@ -904,7 +920,7 @@ class AppointmentService:
                         scheduled_time=None,
                         associate_name=None
                     )
-            
+ 
             # Create the appointment
             appointment_id = await self.supabase_service.create_appointment(
                 session_id=request.session_id,
@@ -912,7 +928,7 @@ class AppointmentService:
                 user_name=request.user_name,
                 user_email=request.user_email,
                 user_phone=request.user_phone,
-                scheduled_time=request.scheduled_time,
+                scheduled_time=scheduled_time_utc,
                 appointment_type=request.appointment_type,
                 notes=request.notes
             )
@@ -937,7 +953,7 @@ class AppointmentService:
                 success=True,
                 appointment_id=appointment_id,
                 message=f"Appointment scheduled successfully with {associate_name}",
-                scheduled_time=request.scheduled_time,
+                scheduled_time=scheduled_local,
                 associate_name=associate_name,
                 calendar_event_id=calendar_event_id
             )

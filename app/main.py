@@ -251,6 +251,28 @@ async def chat_with_llm(request: ChatRequest):
     """
     tracker = PerformanceTracker()
     tracker.start("chat_total")
+
+    # --- Multilingual handling for text chat ---
+    #   1. Detect the language of the typed message.
+    #   2. If not English, translate it to English for all downstream processing (RAG, LLM, etc.).
+    #   3. After obtaining the English LLM reply, translate it back to the original language.
+    #   4. Store the original user message and the final translated assistant reply.
+
+    # Keep the original text for history / DB
+    original_message = request.message
+
+    # Step A: translate incoming text → English (if needed)
+    tracker.start("translate_to_english")
+    try:
+        english_message, original_language = await translation_service.translate_to_english(original_message)
+    except Exception as _tx_err:
+        # On any failure fall back to original
+        english_message = original_message
+        original_language = "en"
+    tracker.end("translate_to_english")
+
+    # Use the English text for the rest of this endpoint’s logic
+    request.message = english_message
     
     try:
         # Load conversation history
@@ -498,26 +520,47 @@ Always provide helpful, structured responses using the property data above with 
             tracker.end("llm_processing")
         tracker.end("appointment_flow")
         
-        # Save conversation to database
+        # Step B – translate LLM reply back to the user's language (if needed)
+        tracker.start("translate_from_english")
+        final_response = llm_response
+        if original_language != "en":
+            try:
+                final_response = await translation_service.translate_text(
+                    llm_response,
+                    original_language,
+                    "en",
+                )
+            except Exception as _tx_back_err:
+                # If translation fails, fall back to English response
+                pass
+        tracker.end("translate_from_english")
+
+        # Save conversation to database (store original user text and translated assistant reply)
         tracker.start("save_conversation")
         await supabase_service.save_conversation_message(
-            request.session_id, "user", request.message
+            request.session_id,
+            "user",
+            original_message,
         )
         await supabase_service.save_conversation_message(
-            request.session_id, "assistant", llm_response
+            request.session_id,
+            "assistant",
+            final_response,
         )
         tracker.end("save_conversation")
         
         tracker.end("chat_total")
         
         return ChatResponse(
-            response=llm_response,
+            response=final_response,
             session_id=request.session_id,
             processing_time=tracker.get_duration("chat_total"),
             metrics={
                 "load_history_time": tracker.get_duration("load_history"),
                 "rag_retrieval_time": tracker.get_duration("rag_retrieval"),
                 "llm_processing_time": tracker.get_duration("llm_processing"),
+                "translate_to_english_time": tracker.get_duration("translate_to_english"),
+                "translate_from_english_time": tracker.get_duration("translate_from_english"),
                 "appointment_detection_time": tracker.get_duration("appointment_detection"),
                 "save_conversation_time": tracker.get_duration("save_conversation")
             }
